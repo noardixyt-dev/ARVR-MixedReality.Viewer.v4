@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MR/VR Hand-Tracked Viewer</title>
 <style>
   body { margin:0; overflow:hidden; font-family:sans-serif; background:black; }
@@ -40,10 +40,8 @@
 <div id="container"></div>
 
 <script type="module">
-// Three.js and GLTFLoader
 import * as THREE from "https://unpkg.com/three@0.158.0/build/three.module.js";
 import { GLTFLoader } from "https://unpkg.com/three@0.158.0/examples/jsm/loaders/GLTFLoader.js";
-// MediaPipe Hands
 import { Hands } from "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js";
 import { Camera } from "https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js";
 
@@ -58,7 +56,6 @@ let tutorialOverlay=document.getElementById("tutorialOverlay");
 initScene();
 animate();
 
-// Three.js scene init
 function initScene(){
   renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
   renderer.setSize(window.innerWidth,window.innerHeight);
@@ -84,7 +81,6 @@ function initScene(){
   });
 }
 
-// Animation loop
 function animate(){
   renderer.setAnimationLoop(()=>{
     renderer.render(scene,camera);
@@ -92,7 +88,6 @@ function animate(){
   });
 }
 
-// Camera feed
 async function startCamera(){
   try{
     video = document.createElement('video');
@@ -109,7 +104,6 @@ async function startCamera(){
     videoTexture.format=THREE.RGBFormat;
     scene.background=videoTexture;
 
-    // Initialize MediaPipe Hands
     initHandTracking();
     statusDiv.textContent="Status: Camera running";
   }catch(e){ statusDiv.textContent="Camera error: "+e.message; }
@@ -127,12 +121,10 @@ document.getElementById("fileInput").addEventListener("change", async (e)=>{
   loader.parse(arrayBuffer,"",(gltf)=>{
     if(model) scene.remove(model);
     model=gltf.scene;
-    // Scale and center
     const bbox=new THREE.Box3().setFromObject(model);
     const size=bbox.getSize(new THREE.Vector3());
     const maxDim=Math.max(size.x,size.y,size.z);
-    const scale=maxDim>1 ? 1/maxDim:1;
-    model.scale.setScalar(scale);
+    model.scale.setScalar(maxDim>1?1/maxDim:1);
     const center=bbox.getCenter(new THREE.Vector3());
     model.position.sub(center);
     model.position.y=0;
@@ -142,35 +134,18 @@ document.getElementById("fileInput").addEventListener("change", async (e)=>{
 });
 
 // VR / AR buttons
-document.getElementById("btnAR").addEventListener("click", async ()=>{
-  if(!navigator.xr){ statusDiv.textContent="WebXR not supported"; return; }
-  try{
-    await startCamera();
-    xrSession = await navigator.xr.requestSession("immersive-ar",{optionalFeatures:["local-floor","bounded-floor"]});
-    renderer.xr.setSession(xrSession);
-    statusDiv.textContent="AR session started";
-  }catch(e){ statusDiv.textContent="Failed AR: "+e.message; }
-});
+const btnAR=document.getElementById("btnAR");
+const btnVR=document.getElementById("btnVR");
+const btnVRMR=document.getElementById("btnVRMR");
 
-document.getElementById("btnVR").addEventListener("click", async ()=>{
-  if(!navigator.xr){ statusDiv.textContent="WebXR not supported"; return; }
-  try{
-    xrSession = await navigator.xr.requestSession("immersive-vr",{optionalFeatures:["local-floor"]});
-    renderer.xr.setSession(xrSession);
-    stopCamera(); scene.background=new THREE.Color(0xffffff);
-    statusDiv.textContent="VR session started";
-  }catch(e){ statusDiv.textContent="Failed VR: "+e.message; }
-});
+btnAR.addEventListener("click", async ()=>{if(!navigator.xr){statusDiv.textContent="WebXR not supported";return;}
+try{await startCamera(); xrSession=await navigator.xr.requestSession("immersive-ar",{optionalFeatures:["local-floor","bounded-floor"]}); renderer.xr.setSession(xrSession); statusDiv.textContent="AR session started";}catch(e){statusDiv.textContent="Failed AR: "+e.message;}});
 
-document.getElementById("btnVRMR").addEventListener("click", async ()=>{
-  if(!navigator.xr){ statusDiv.textContent="WebXR not supported"; return; }
-  try{
-    await startCamera();
-    xrSession = await navigator.xr.requestSession("immersive-vr",{optionalFeatures:["local-floor"]});
-    renderer.xr.setSession(xrSession);
-    statusDiv.textContent="VR Mixed Reality started";
-  }catch(e){ statusDiv.textContent="Failed VRMR: "+e.message; }
-});
+btnVR.addEventListener("click", async ()=>{if(!navigator.xr){statusDiv.textContent="WebXR not supported";return;}
+try{xrSession=await navigator.xr.requestSession("immersive-vr",{optionalFeatures:["local-floor"]}); renderer.xr.setSession(xrSession); stopCamera(); scene.background=new THREE.Color(0xffffff); statusDiv.textContent="VR session started";}catch(e){statusDiv.textContent="Failed VR: "+e.message;}});
+
+btnVRMR.addEventListener("click", async ()=>{if(!navigator.xr){statusDiv.textContent="WebXR not supported";return;}
+try{await startCamera(); xrSession=await navigator.xr.requestSession("immersive-vr",{optionalFeatures:["local-floor"]}); renderer.xr.setSession(xrSession); statusDiv.textContent="VR Mixed Reality started";}catch(e){statusDiv.textContent="Failed VRMR: "+e.message;}});
 
 // Tutorial overlay
 document.getElementById("btnTutorial").addEventListener("click",()=>{tutorialOverlay.style.display="block";});
@@ -186,9 +161,7 @@ if(isIOS && isSafari){
   document.getElementById("openChrome").href="googlechrome://"+url.replace(/^https?:\/\//,'');
 }
 
-//////////////////////////
 // Hand Tracking
-//////////////////////////
 let hands=null, mpCamera=null, grab=false;
 function initHandTracking(){
   hands=new Hands({locateFile:(file)=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
@@ -199,25 +172,22 @@ function initHandTracking(){
 }
 
 let lastPinchDistance=0;
+let handPos={x:0,y:0,z:0};
 function onHandsResults(results){
   if(!model || !results.multiHandLandmarks || results.multiHandLandmarks.length===0){ grab=false; return; }
   const lm=results.multiHandLandmarks[0];
-  const pinchDist=Math.hypot(lm[4].x-lm[8].x,lm[4].y-lm[8].y); // thumb-tip to index-tip
-  grab=pinchDist<0.05; // threshold for pinch
+  const pinchDist=Math.hypot(lm[4].x-lm[8].x,lm[4].y-lm[8].y);
+  grab=pinchDist<0.05;
   lastPinchDistance=pinchDist;
-  handPos={x:lm[9].x-0.5,y:0.5-lm[9].y,z:0}; // approximate palm center
+  handPos={x:lm[9].x-0.5, y:0.5-lm[9].y, z:0};
 }
 
-let handPos={x:0,y:0,z:0};
 function updateHandTracking(){
   if(!grab || !model) return;
-  // Map handPos to scene coordinates
   model.position.x = handPos.x*2;
-  model.position.y = 0; // keep on ground
+  model.position.y = 0;
   model.position.z = handPos.z*2;
-  // Optional rotation/scale can be added using additional landmarks
 }
-
 </script>
 </body>
 </html>
