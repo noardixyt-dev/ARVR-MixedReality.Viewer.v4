@@ -1,144 +1,223 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>Mixed Reality Viewer</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <style>
-    body { margin: 0; overflow: hidden; background: black; font-family: sans-serif; color: white; }
-    #ui { position: absolute; top: 10px; left: 10px; z-index: 10; }
-    button, input { margin: 4px; padding: 6px 10px; border-radius: 6px; border: none; }
-    #status { margin-top: 5px; font-size: 14px; }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MR/VR Hand-Tracked Viewer</title>
+<style>
+  body { margin:0; overflow:hidden; font-family:sans-serif; background:black; }
+  #ui { position:absolute; top:10px; left:10px; z-index:10; background: rgba(0,0,0,0.6); padding:8px; border-radius:8px; color:white; }
+  button, input { margin:5px; padding:8px; font-size:14px; }
+  #tutorialOverlay { display:none; position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); color:white; z-index:20; text-align:center; padding:20px; overflow:auto; }
+  #iosChromeNotice { display:none; position:absolute; top:0; left:0; width:100%; background:#f00; color:#fff; text-align:center; padding:10px; z-index:30; }
+  a { color:white; font-weight:bold; text-decoration:none; }
+</style>
 </head>
 <body>
-  <div id="ui">
-    <input type="file" id="fileInput" accept=".glb,.gltf" />
-    <button id="btnVR">Enter VR</button>
-    <button id="btnAR">Enter AR</button>
-    <div id="status">Status: Ready</div>
-  </div>
 
-  <script type="module">
-    import * as THREE from "https://unpkg.com/three@0.158.0/build/three.module.js";
-    import { GLTFLoader } from "https://unpkg.com/three@0.158.0/examples/jsm/loaders/GLTFLoader.js";
-    import { OrbitControls } from "https://unpkg.com/three@0.158.0/examples/jsm/controls/OrbitControls.js";
+<div id="iosChromeNotice">
+  <a id="openChrome" href="#">Open in Chrome for full AR support</a>
+</div>
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.xr.enabled = true;
-    document.body.appendChild(renderer.domElement);
+<div id="ui">
+  <input type="file" id="fileInput" accept=".glb,.gltf" />
+  <button id="btnAR">Enter AR</button>
+  <button id="btnVR">Enter VR</button>
+  <button id="btnVRMR">Enter VR Mixed Reality</button>
+  <button id="btnTutorial">Show Tutorial</button>
+  <div id="status">Status: Ready</div>
+</div>
 
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 100);
-    camera.position.z = 2;
+<div id="tutorialOverlay">
+  <h2>Gesture Tutorial</h2>
+  <p><strong>Pinch/OK gesture:</strong> Grab the model</p>
+  <p><strong>Move your hand:</strong> Move the model along the plane</p>
+  <p><strong>Rotate gesture:</strong> Rotate model around Y axis</p>
+  <p><strong>Pinch distance:</strong> Scale the model</p>
+  <p>Tap anywhere to close this tutorial.</p>
+</div>
 
-    const controls = new OrbitControls(camera, renderer.domElement);
+<div id="container"></div>
 
-    const light = new THREE.DirectionalLight(0xffffff, 1);
-    light.position.set(3, 3, 3);
-    scene.add(light);
-    scene.add(new THREE.AmbientLight(0x404040));
+<script type="module">
+// Three.js and GLTFLoader
+import * as THREE from "https://unpkg.com/three@0.158.0/build/three.module.js";
+import { GLTFLoader } from "https://unpkg.com/three@0.158.0/examples/jsm/loaders/GLTFLoader.js";
+// MediaPipe Hands
+import { Hands } from "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js";
+import { Camera } from "https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js";
 
-    const statusDiv = document.getElementById("status");
+let scene, camera, renderer;
+let model = null;
+let video=null, videoTexture=null;
+let container=document.getElementById("container");
+let statusDiv=document.getElementById("status");
+let xrSession=null;
+let tutorialOverlay=document.getElementById("tutorialOverlay");
 
-    // Load 3D models
-    const loader = new GLTFLoader();
-    document.getElementById("fileInput").addEventListener("change", async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      statusDiv.textContent = "Status: Loading model...";
-      const arrayBuffer = await file.arrayBuffer();
-      loader.parse(arrayBuffer, "", (gltf) => {
-        const model = gltf.scene;
-        scene.add(model);
+initScene();
+animate();
 
-        // Center & scale
-        const box = new THREE.Box3().setFromObject(model);
-        const size = box.getSize(new THREE.Vector3()).length();
-        const center = box.getCenter(new THREE.Vector3());
-        model.position.sub(center); // center
-        const scale = 1 / size;
-        model.scale.setScalar(scale);
+// Three.js scene init
+function initScene(){
+  renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+  renderer.setSize(window.innerWidth,window.innerHeight);
+  renderer.xr.enabled=true;
+  container.appendChild(renderer.domElement);
 
-        statusDiv.textContent = "Status: Model loaded!";
-      }, (err) => {
-        console.error(err);
-        statusDiv.textContent = "Status: Failed to load model";
-      });
-    });
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 100);
+  camera.position.set(0,1.6,2);
 
-    // Camera background (aspect-ratio fixed plane)
-    async function startCamera() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-        const video = document.createElement("video");
-        video.srcObject = stream;
-        video.autoplay = true;
-        video.playsInline = true;
-        await video.play();
+  const hemiLight = new THREE.HemisphereLight(0xffffff,0x444444,1.0);
+  hemiLight.position.set(0,20,0);
+  scene.add(hemiLight);
 
-        const videoTexture = new THREE.VideoTexture(video);
+  const dirLight = new THREE.DirectionalLight(0xffffff,1);
+  dirLight.position.set(3,10,10);
+  scene.add(dirLight);
 
-        function updatePlane() {
-          if (video.videoWidth === 0) {
-            requestAnimationFrame(updatePlane);
-            return;
-          }
-          const videoAspect = video.videoWidth / video.videoHeight;
-          const screenAspect = window.innerWidth / window.innerHeight;
+  window.addEventListener('resize',()=>{
+    camera.aspect=window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth,window.innerHeight);
+  });
+}
 
-          let planeWidth, planeHeight;
-          if (screenAspect > videoAspect) {
-            planeHeight = 2;
-            planeWidth = planeHeight * videoAspect;
-          } else {
-            planeWidth = 2;
-            planeHeight = planeWidth / videoAspect;
-          }
+// Animation loop
+function animate(){
+  renderer.setAnimationLoop(()=>{
+    renderer.render(scene,camera);
+    if(model) updateHandTracking();
+  });
+}
 
-          const planeGeometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
-          const planeMaterial = new THREE.MeshBasicMaterial({ map: videoTexture });
-          const videoPlane = new THREE.Mesh(planeGeometry, planeMaterial);
-          videoPlane.position.z = -1;
-          scene.add(videoPlane);
-        }
-        updatePlane();
-        statusDiv.textContent = "Status: Camera running";
-      } catch (err) {
-        statusDiv.textContent = "Status: Camera error " + err.message;
-      }
-    }
-    startCamera();
+// Camera feed
+async function startCamera(){
+  try{
+    video = document.createElement('video');
+    video.autoplay=true;
+    video.playsInline=true;
+    let stream;
+    try{ stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}, audio:false}); }
+    catch{ stream=await navigator.mediaDevices.getUserMedia({video:true}); }
+    video.srcObject=stream;
+    await video.play();
+    videoTexture=new THREE.VideoTexture(video);
+    videoTexture.minFilter=THREE.LinearFilter;
+    videoTexture.magFilter=THREE.LinearFilter;
+    videoTexture.format=THREE.RGBFormat;
+    scene.background=videoTexture;
 
-    // Animation loop
-    renderer.setAnimationLoop(() => {
-      renderer.render(scene, camera);
-    });
+    // Initialize MediaPipe Hands
+    initHandTracking();
+    statusDiv.textContent="Status: Camera running";
+  }catch(e){ statusDiv.textContent="Camera error: "+e.message; }
+}
 
-    // Resize
-    window.addEventListener("resize", () => {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    });
+function stopCamera(){
+  if(video && video.srcObject){ video.srcObject.getTracks().forEach(t=>t.stop()); video=null; scene.background=null;}
+}
 
-    // WebXR VR/AR buttons
-    async function enterXR(mode) {
-      if (!navigator.xr) {
-        statusDiv.textContent = "Status: WebXR not supported";
-        return;
-      }
-      try {
-        const session = await navigator.xr.requestSession(mode, { optionalFeatures: ["local-floor"] });
-        renderer.xr.setSession(session);
-        statusDiv.textContent = `Status: ${mode} active`;
-      } catch (e) {
-        statusDiv.textContent = `Status: Failed to start ${mode}`;
-      }
-    }
-    document.getElementById("btnVR").onclick = () => enterXR("immersive-vr");
-    document.getElementById("btnAR").onclick = () => enterXR("immersive-ar");
-  </script>
+// Model upload
+document.getElementById("fileInput").addEventListener("change", async (e)=>{
+  const file=e.target.files[0]; if(!file)return;
+  const arrayBuffer=await file.arrayBuffer();
+  const loader=new GLTFLoader();
+  loader.parse(arrayBuffer,"",(gltf)=>{
+    if(model) scene.remove(model);
+    model=gltf.scene;
+    // Scale and center
+    const bbox=new THREE.Box3().setFromObject(model);
+    const size=bbox.getSize(new THREE.Vector3());
+    const maxDim=Math.max(size.x,size.y,size.z);
+    const scale=maxDim>1 ? 1/maxDim:1;
+    model.scale.setScalar(scale);
+    const center=bbox.getCenter(new THREE.Vector3());
+    model.position.sub(center);
+    model.position.y=0;
+    scene.add(model);
+    statusDiv.textContent="Status: Model loaded";
+  },err=>{ console.error(err); statusDiv.textContent="Failed to load model"; });
+});
+
+// VR / AR buttons
+document.getElementById("btnAR").addEventListener("click", async ()=>{
+  if(!navigator.xr){ statusDiv.textContent="WebXR not supported"; return; }
+  try{
+    await startCamera();
+    xrSession = await navigator.xr.requestSession("immersive-ar",{optionalFeatures:["local-floor","bounded-floor"]});
+    renderer.xr.setSession(xrSession);
+    statusDiv.textContent="AR session started";
+  }catch(e){ statusDiv.textContent="Failed AR: "+e.message; }
+});
+
+document.getElementById("btnVR").addEventListener("click", async ()=>{
+  if(!navigator.xr){ statusDiv.textContent="WebXR not supported"; return; }
+  try{
+    xrSession = await navigator.xr.requestSession("immersive-vr",{optionalFeatures:["local-floor"]});
+    renderer.xr.setSession(xrSession);
+    stopCamera(); scene.background=new THREE.Color(0xffffff);
+    statusDiv.textContent="VR session started";
+  }catch(e){ statusDiv.textContent="Failed VR: "+e.message; }
+});
+
+document.getElementById("btnVRMR").addEventListener("click", async ()=>{
+  if(!navigator.xr){ statusDiv.textContent="WebXR not supported"; return; }
+  try{
+    await startCamera();
+    xrSession = await navigator.xr.requestSession("immersive-vr",{optionalFeatures:["local-floor"]});
+    renderer.xr.setSession(xrSession);
+    statusDiv.textContent="VR Mixed Reality started";
+  }catch(e){ statusDiv.textContent="Failed VRMR: "+e.message; }
+});
+
+// Tutorial overlay
+document.getElementById("btnTutorial").addEventListener("click",()=>{tutorialOverlay.style.display="block";});
+tutorialOverlay.addEventListener("click",()=>{tutorialOverlay.style.display="none";});
+
+// iOS Chrome redirect
+const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)&&!window.MSStream;
+const isSafari=/^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+if(isIOS && isSafari){
+  const notice=document.getElementById("iosChromeNotice");
+  notice.style.display="block";
+  const url=window.location.href;
+  document.getElementById("openChrome").href="googlechrome://"+url.replace(/^https?:\/\//,'');
+}
+
+//////////////////////////
+// Hand Tracking
+//////////////////////////
+let hands=null, mpCamera=null, grab=false;
+function initHandTracking(){
+  hands=new Hands({locateFile:(file)=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+  hands.setOptions({maxNumHands:1,modelComplexity:1,minDetectionConfidence:0.7,minTrackingConfidence:0.5});
+  hands.onResults(onHandsResults);
+  mpCamera=new Camera(video,{onFrame:async()=>{await hands.send({image:video})},width:640,height:480});
+  mpCamera.start();
+}
+
+let lastPinchDistance=0;
+function onHandsResults(results){
+  if(!model || !results.multiHandLandmarks || results.multiHandLandmarks.length===0){ grab=false; return; }
+  const lm=results.multiHandLandmarks[0];
+  const pinchDist=Math.hypot(lm[4].x-lm[8].x,lm[4].y-lm[8].y); // thumb-tip to index-tip
+  grab=pinchDist<0.05; // threshold for pinch
+  lastPinchDistance=pinchDist;
+  handPos={x:lm[9].x-0.5,y:0.5-lm[9].y,z:0}; // approximate palm center
+}
+
+let handPos={x:0,y:0,z:0};
+function updateHandTracking(){
+  if(!grab || !model) return;
+  // Map handPos to scene coordinates
+  model.position.x = handPos.x*2;
+  model.position.y = 0; // keep on ground
+  model.position.z = handPos.z*2;
+  // Optional rotation/scale can be added using additional landmarks
+}
+
+</script>
 </body>
 </html>
