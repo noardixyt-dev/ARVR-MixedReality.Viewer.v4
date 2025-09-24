@@ -1,21 +1,68 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>JS Test</title>
+  <meta charset="UTF-8" />
+  <title>Camera Test</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+  </style>
 </head>
 <body>
-  <h1>JS Test Page</h1>
-  <button id="testBtn">Click me</button>
-  <div id="output">Waiting...</div>
-
   <script type="module">
-    const out = document.getElementById("output");
-    out.textContent = "✅ JavaScript is running";
+    import * as THREE from "https://unpkg.com/three@0.158.0/build/three.module.js";
 
-    document.getElementById("testBtn").addEventListener("click", () => {
-      out.textContent = "Button was clicked!";
-    });
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // Scene + Camera
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(
+      70,
+      window.innerWidth / window.innerHeight,
+      0.01,
+      100
+    );
+    camera.position.z = 2;
+
+    // Add a cube
+    const geometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+    const material = new THREE.MeshNormalMaterial();
+    const cube = new THREE.Mesh(geometry, material);
+    scene.add(cube);
+
+    // Animate
+    function animate() {
+      cube.rotation.x += 0.01;
+      cube.rotation.y += 0.01;
+      renderer.render(scene, camera);
+      requestAnimationFrame(animate);
+    }
+    animate();
+
+    // Camera background
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" }
+        });
+        const video = document.createElement("video");
+        video.srcObject = stream;
+        video.autoplay = true;
+        video.playsInline = true;
+        await video.play();
+
+        const videoTexture = new THREE.VideoTexture(video);
+        scene.background = videoTexture;
+      } catch (err) {
+        alert("Camera error: " + err.message);
+      }
+    }
+
+    startCamera();
   </script>
 </body>
 </html>
