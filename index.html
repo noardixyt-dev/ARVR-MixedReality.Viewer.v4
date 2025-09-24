@@ -2,53 +2,76 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Camera Test</title>
+  <title>Mixed Reality Viewer</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
-    body { margin: 0; overflow: hidden; }
-    canvas { display: block; }
+    body { margin: 0; overflow: hidden; background: black; font-family: sans-serif; color: white; }
+    #ui { position: absolute; top: 10px; left: 10px; z-index: 10; }
+    button, input { margin: 4px; padding: 6px 10px; border-radius: 6px; border: none; }
+    #status { margin-top: 5px; font-size: 14px; }
   </style>
 </head>
 <body>
+  <div id="ui">
+    <input type="file" id="fileInput" accept=".glb,.gltf" />
+    <button id="btnVR">Enter VR</button>
+    <button id="btnAR">Enter AR</button>
+    <div id="status">Status: Ready</div>
+  </div>
+
   <script type="module">
     import * as THREE from "https://unpkg.com/three@0.158.0/build/three.module.js";
+    import { GLTFLoader } from "https://unpkg.com/three@0.158.0/examples/jsm/loaders/GLTFLoader.js";
+    import { OrbitControls } from "https://unpkg.com/three@0.158.0/examples/jsm/controls/OrbitControls.js";
 
-    // Renderer
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.xr.enabled = true;
     document.body.appendChild(renderer.domElement);
 
-    // Scene + Camera
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(
-      70,
-      window.innerWidth / window.innerHeight,
-      0.01,
-      100
-    );
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 100);
     camera.position.z = 2;
 
-    // Add a cube
-    const geometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-    const material = new THREE.MeshNormalMaterial();
-    const cube = new THREE.Mesh(geometry, material);
-    scene.add(cube);
+    const controls = new OrbitControls(camera, renderer.domElement);
 
-    // Animate
-    function animate() {
-      cube.rotation.x += 0.01;
-      cube.rotation.y += 0.01;
-      renderer.render(scene, camera);
-      requestAnimationFrame(animate);
-    }
-    animate();
+    const light = new THREE.DirectionalLight(0xffffff, 1);
+    light.position.set(3, 3, 3);
+    scene.add(light);
+    scene.add(new THREE.AmbientLight(0x404040));
 
-    // Camera background
+    const statusDiv = document.getElementById("status");
+
+    // Load 3D models
+    const loader = new GLTFLoader();
+    document.getElementById("fileInput").addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      statusDiv.textContent = "Status: Loading model...";
+      const arrayBuffer = await file.arrayBuffer();
+      loader.parse(arrayBuffer, "", (gltf) => {
+        const model = gltf.scene;
+        scene.add(model);
+
+        // Center & scale
+        const box = new THREE.Box3().setFromObject(model);
+        const size = box.getSize(new THREE.Vector3()).length();
+        const center = box.getCenter(new THREE.Vector3());
+        model.position.sub(center); // center
+        const scale = 1 / size;
+        model.scale.setScalar(scale);
+
+        statusDiv.textContent = "Status: Model loaded!";
+      }, (err) => {
+        console.error(err);
+        statusDiv.textContent = "Status: Failed to load model";
+      });
+    });
+
+    // Camera background (aspect-ratio fixed plane)
     async function startCamera() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment" }
-        });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
         const video = document.createElement("video");
         video.srcObject = stream;
         video.autoplay = true;
@@ -56,13 +79,66 @@
         await video.play();
 
         const videoTexture = new THREE.VideoTexture(video);
-        scene.background = videoTexture;
+
+        function updatePlane() {
+          if (video.videoWidth === 0) {
+            requestAnimationFrame(updatePlane);
+            return;
+          }
+          const videoAspect = video.videoWidth / video.videoHeight;
+          const screenAspect = window.innerWidth / window.innerHeight;
+
+          let planeWidth, planeHeight;
+          if (screenAspect > videoAspect) {
+            planeHeight = 2;
+            planeWidth = planeHeight * videoAspect;
+          } else {
+            planeWidth = 2;
+            planeHeight = planeWidth / videoAspect;
+          }
+
+          const planeGeometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
+          const planeMaterial = new THREE.MeshBasicMaterial({ map: videoTexture });
+          const videoPlane = new THREE.Mesh(planeGeometry, planeMaterial);
+          videoPlane.position.z = -1;
+          scene.add(videoPlane);
+        }
+        updatePlane();
+        statusDiv.textContent = "Status: Camera running";
       } catch (err) {
-        alert("Camera error: " + err.message);
+        statusDiv.textContent = "Status: Camera error " + err.message;
       }
     }
-
     startCamera();
+
+    // Animation loop
+    renderer.setAnimationLoop(() => {
+      renderer.render(scene, camera);
+    });
+
+    // Resize
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // WebXR VR/AR buttons
+    async function enterXR(mode) {
+      if (!navigator.xr) {
+        statusDiv.textContent = "Status: WebXR not supported";
+        return;
+      }
+      try {
+        const session = await navigator.xr.requestSession(mode, { optionalFeatures: ["local-floor"] });
+        renderer.xr.setSession(session);
+        statusDiv.textContent = `Status: ${mode} active`;
+      } catch (e) {
+        statusDiv.textContent = `Status: Failed to start ${mode}`;
+      }
+    }
+    document.getElementById("btnVR").onclick = () => enterXR("immersive-vr");
+    document.getElementById("btnAR").onclick = () => enterXR("immersive-ar");
   </script>
 </body>
 </html>
